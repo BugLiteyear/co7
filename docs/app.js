@@ -15,15 +15,19 @@ document.getElementById("nav-github").href = REPO_URL;
 document.getElementById("footer-github").href = REPO_URL;
 document.getElementById("download-btn").href = `${REPO_URL}/releases/latest`;
 
-/* ---------- signature: live visit timer ---------- */
-(function startVisitClock() {
-  const el = document.getElementById("visit-clock");
-  const t0 = Date.now();
-  const pad = (n) => String(n).padStart(2, "0");
-  setInterval(() => {
-    const s = Math.floor((Date.now() - t0) / 1000);
-    el.textContent = `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
-  }, 1000);
+/* ---------- signature: request demo strip ---------- */
+(function animateRequestDemo() {
+  const result = document.getElementById("req-result");
+  const time = document.getElementById("req-time");
+  if (!result || !time) return;
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) { time.textContent = "42 ms"; return; }
+  result.classList.add("pending");
+  setTimeout(() => {
+    result.classList.remove("pending");
+    result.classList.add("done");
+    time.textContent = `${38 + Math.floor(Math.random() * 30)} ms`;
+  }, 900);
 })();
 
 /* ---------- helpers ---------- */
