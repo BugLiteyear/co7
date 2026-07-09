@@ -85,6 +85,8 @@ function assetListHtml(assets) {
 }
 
 /* ---------- OS detection ---------- */
+const OS_LABELS = { windows: "Windows", mac: "macOS", linux: "Linux" };
+
 function detectOS() {
   // Try modern API first
   try {
@@ -106,13 +108,42 @@ function detectOS() {
   return "other";
 }
 
+/* Apple Silicon vs Intel — best effort; defaults to arm64 (most Macs) */
+async function detectMacArch() {
+  try {
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      const { architecture } = await navigator.userAgentData.getHighEntropyValues(["architecture"]);
+      if (architecture) return architecture.includes("arm") ? "arm" : "x64";
+    }
+  } catch (e) { /* ignore */ }
+  try {
+    const gl = document.createElement("canvas").getContext("webgl");
+    const ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
+    const renderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "";
+    if (/intel|amd|nvidia/i.test(renderer)) return "x64";
+  } catch (e) { /* ignore */ }
+  return "arm";
+}
+
+function pickAsset(candidates, os, arch) {
+  if (!candidates.length) return null;
+  if (os === "mac" && candidates.length > 1) {
+    const arm = candidates.find((a) => /arm64|aarch64/i.test(a.name));
+    const x64 = candidates.find((a) => !/arm64|aarch64/i.test(a.name));
+    return (arch === "x64" ? x64 : arm) || candidates[0];
+  }
+  return candidates[0];
+}
+
 /* ---------- fetch & render releases ---------- */
 async function loadReleases() {
   const latestEl = document.getElementById("latest-release");
   try {
     const res = await fetch(`${API_URL}?per_page=30`);
     if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-    const releases = (await res.json()).filter((r) => !r.draft);
+    const releases = (await res.json())
+      .filter((r) => !r.draft)
+      .sort((a, b) => new Date(b.published_at) - new Date(a.published_at));
     if (!releases.length) throw new Error("No releases found");
 
     const [latest, ...older] = releases;
@@ -122,10 +153,6 @@ async function loadReleases() {
     const meta = document.getElementById("download-meta");
     const fineprint = document.getElementById("hero-fineprint");
     if (latest.assets.length) {
-      // remove any existing select from a prior render
-      const old = document.getElementById("download-select");
-      if (old) old.remove();
-
       const os = detectOS();
       const assets = latest.assets;
       const assetsByOS = { windows: [], mac: [], linux: [], other: [] };
@@ -137,33 +164,20 @@ async function loadReleases() {
         else assetsByOS.other.push(a);
       }
 
-      const defaultAsset = (assetsByOS[os] && assetsByOS[os][0]) || assets[0];
-      btn.href = defaultAsset.browser_download_url;
-      meta.textContent = `${latest.tag_name} · ${fmtSize(defaultAsset.size)}`;
-      fineprint.textContent = `${latest.tag_name} — released ${fmtDate(latest.published_at)}`;
+      const arch = os === "mac" ? await detectMacArch() : null;
+      const matched = pickAsset(assetsByOS[os] || [], os, arch);
+      const asset = matched || assets[0];
 
-      // If there are multiple assets, add a chooser so users can pick an OS/build
-      if (assets.length > 1) {
-        const heroCta = document.querySelector('.hero-cta');
-        const sel = document.createElement('select');
-        sel.id = 'download-select';
-        sel.setAttribute('aria-label', 'Choose download');
-        for (const a of assets) {
-          const opt = document.createElement('option');
-          opt.value = a.browser_download_url;
-          opt.textContent = `${a.name} — ${fmtSize(a.size)}`;
-          opt.dataset.size = String(a.size);
-          if (a === defaultAsset) opt.selected = true;
-          sel.appendChild(opt);
-        }
-        sel.addEventListener('change', (e) => {
-          const o = e.target.selectedOptions[0];
-          btn.href = o.value;
-          const s = Number(o.dataset.size) || 0;
-          meta.textContent = `${latest.tag_name} · ${fmtSize(s)}`;
-        });
-        if (heroCta) heroCta.insertBefore(sel, document.getElementById('all-releases-link'));
-      }
+      btn.href = asset.browser_download_url;
+      document.getElementById("download-label").textContent =
+        matched ? `Download for ${OS_LABELS[os]}` : "Download latest";
+      const archLabel = matched && os === "mac" && assetsByOS.mac.length > 1
+        ? (/arm64|aarch64/i.test(asset.name) ? " · Apple Silicon" : " · Intel")
+        : "";
+      meta.textContent = `${latest.tag_name}${archLabel} · ${fmtSize(asset.size)}`;
+      fineprint.innerHTML =
+        `${escapeHtml(latest.tag_name)} — released ${fmtDate(latest.published_at)}` +
+        ` · <a href="#releases">other platforms</a>`;
     } else {
       btn.href = latest.html_url;
       meta.textContent = latest.tag_name;
