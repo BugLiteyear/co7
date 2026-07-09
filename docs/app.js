@@ -84,6 +84,28 @@ function assetListHtml(assets) {
   return `<div class="asset-list">${rows}</div>`;
 }
 
+/* ---------- OS detection ---------- */
+function detectOS() {
+  // Try modern API first
+  try {
+    if (navigator.userAgentData && navigator.userAgentData.platform) {
+      const p = (navigator.userAgentData.platform || "").toLowerCase();
+      if (p.includes("win")) return "windows";
+      if (p.includes("mac") || p.includes("iphone") || p.includes("ipad")) return "mac";
+      if (p.includes("linux")) return "linux";
+    }
+  } catch (e) { /* ignore */ }
+  const platform = (navigator.platform || "").toLowerCase();
+  if (platform.includes("win")) return "windows";
+  if (platform.includes("mac") || platform.includes("iphone") || platform.includes("ipad")) return "mac";
+  if (platform.includes("linux") || platform.includes("x11")) return "linux";
+  const ua = (navigator.userAgent || "").toLowerCase();
+  if (ua.includes("windows")) return "windows";
+  if (ua.includes("mac") || ua.includes("macintosh") || ua.includes("darwin")) return "mac";
+  if (ua.includes("linux")) return "linux";
+  return "other";
+}
+
 /* ---------- fetch & render releases ---------- */
 async function loadReleases() {
   const latestEl = document.getElementById("latest-release");
@@ -100,9 +122,48 @@ async function loadReleases() {
     const meta = document.getElementById("download-meta");
     const fineprint = document.getElementById("hero-fineprint");
     if (latest.assets.length) {
-      btn.href = latest.assets[0].browser_download_url;
-      meta.textContent = `${latest.tag_name} · ${fmtSize(latest.assets[0].size)}`;
+      // remove any existing select from a prior render
+      const old = document.getElementById("download-select");
+      if (old) old.remove();
+
+      const os = detectOS();
+      const assets = latest.assets;
+      const assetsByOS = { windows: [], mac: [], linux: [], other: [] };
+      for (const a of assets) {
+        const n = (a.name || "").toLowerCase();
+        if (n.endsWith(".exe") || n.endsWith(".msi") || n.includes("windows")) assetsByOS.windows.push(a);
+        else if (n.endsWith(".dmg") || n.endsWith(".pkg") || n.includes("mac") || n.includes("darwin")) assetsByOS.mac.push(a);
+        else if (n.endsWith(".appimage") || n.endsWith(".deb") || n.endsWith(".rpm") || n.includes("linux")) assetsByOS.linux.push(a);
+        else assetsByOS.other.push(a);
+      }
+
+      const defaultAsset = (assetsByOS[os] && assetsByOS[os][0]) || assets[0];
+      btn.href = defaultAsset.browser_download_url;
+      meta.textContent = `${latest.tag_name} · ${fmtSize(defaultAsset.size)}`;
       fineprint.textContent = `${latest.tag_name} — released ${fmtDate(latest.published_at)}`;
+
+      // If there are multiple assets, add a chooser so users can pick an OS/build
+      if (assets.length > 1) {
+        const heroCta = document.querySelector('.hero-cta');
+        const sel = document.createElement('select');
+        sel.id = 'download-select';
+        sel.setAttribute('aria-label', 'Choose download');
+        for (const a of assets) {
+          const opt = document.createElement('option');
+          opt.value = a.browser_download_url;
+          opt.textContent = `${a.name} — ${fmtSize(a.size)}`;
+          opt.dataset.size = String(a.size);
+          if (a === defaultAsset) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        sel.addEventListener('change', (e) => {
+          const o = e.target.selectedOptions[0];
+          btn.href = o.value;
+          const s = Number(o.dataset.size) || 0;
+          meta.textContent = `${latest.tag_name} · ${fmtSize(s)}`;
+        });
+        if (heroCta) heroCta.insertBefore(sel, document.getElementById('all-releases-link'));
+      }
     } else {
       btn.href = latest.html_url;
       meta.textContent = latest.tag_name;
